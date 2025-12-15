@@ -10,7 +10,8 @@ provider:
   environment:
     STAGE: ${self:provider.stage}
     ITEMS_TABLE: ${self:service}-items-${self:provider.stage}
-    SNS_TOPIC_NAME: ${self:service}-items-topic-${self:provider.stage}
+    SNS_TOPIC_ARN:
+      Fn::Ref: ItemsTopic
   iamRoleStatements:
     - Effect: Allow
       Action:
@@ -38,17 +39,11 @@ custom:
       - local
     host: http://localhost
     edgePort: 4566
-    autostart: false
+    autostart: true
     lambda:
-      mountCode: false
+      mountCode: true
     docker:
       sudo: false
-    # Desabilitar cache invalidation para evitar problemas
-    skipCacheInvalidation: true
-    # Configuração do API Gateway
-    apigateway:
-      # Forçar criação do deployment
-      createDeployment: true
 
 resources:
   Resources:
@@ -96,17 +91,6 @@ resources:
         Principal: sns.amazonaws.com
         SourceArn:
           Ref: ItemsTopic
-
-    # API Gateway Deployment (necessário para LocalStack)
-    ApiGatewayDeployment:
-      Type: AWS::ApiGateway::Deployment
-      DependsOn:
-        - ApiGatewayRestApi
-      Properties:
-        RestApiId:
-          Ref: ApiGatewayRestApi
-        StageName: ${self:provider.stage}
-        Description: Deployment for ${self:provider.stage} stage
 
 functions:
   # CREATE - POST /items

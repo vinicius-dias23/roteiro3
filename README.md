@@ -66,36 +66,28 @@ docker --version
 
 ### 1. Iniciar o LocalStack
 
-**⚠️ IMPORTANTE:** O LocalStack precisa de acesso ao Docker socket para executar funções Lambda. Use o script fornecido:
+O LocalStack será iniciado automaticamente quando você fizer o deploy, mas você também pode iniciá-lo manualmente:
 
 ```bash
-./start-localstack.sh
+docker run -d -p 4566:4566 -p 4571:4571 localstack/localstack
 ```
 
-Este script inicia o LocalStack com as configurações corretas, incluindo:
-- Acesso ao Docker socket para executar Lambdas
-- Serviços necessários habilitados (Lambda, DynamoDB, SNS, API Gateway)
-- Volume montado para o código
+### 2. Iniciar o LocalStack (se não estiver rodando)
 
-**Alternativa manual:**
-
-Se preferir iniciar manualmente, use:
+O LocalStack precisa estar rodando antes do deploy. Se não estiver, inicie-o com:
 
 ```bash
-docker run -d \
-  --name localstack \
-  -p 4566:4566 \
-  -p 4571:4571 \
+docker run -d -p 4566:4566 -p 4571:4571 \
   -e SERVICES=lambda,dynamodb,sns,apigateway,cloudformation,logs,iam \
   -e LAMBDA_EXECUTOR=docker-reuse \
+  -e LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=180 \
   -e DOCKER_HOST=unix:///var/run/docker.sock \
   -v /var/run/docker.sock:/var/run/docker.sock \
+  --name localstack \
   localstack/localstack
 ```
 
-**Nota:** O LocalStack NÃO será iniciado automaticamente pelo plugin devido à necessidade de acesso ao Docker socket.
-
-### 2. Fazer o Deploy
+### 3. Fazer o Deploy
 
 Execute o deploy da aplicação no ambiente local:
 
@@ -103,32 +95,31 @@ Execute o deploy da aplicação no ambiente local:
 npm run deploy
 ```
 
-Ou usando o Serverless diretamente:
-
-```bash
-serverless deploy --stage local
-```
-
 Este comando irá:
 - Criar a tabela DynamoDB
 - Criar o tópico SNS
 - Configurar as funções Lambda
 - Configurar o API Gateway
+- Fazer o deploy do stage do API Gateway no LocalStack
 - Configurar a subscription do SNS para o Lambda subscriber
 
-### 3. Obter a URL da API
+**Nota:** O script `deploy-api-gateway.sh` é executado automaticamente após o deploy para criar o stage do API Gateway no LocalStack.
 
-Após o deploy, você verá a URL base da API no output. Ela será algo como:
+### 4. Obter a URL da API
 
+Após o deploy, você verá a URL base da API no output. O LocalStack API Gateway oferece dois formatos de URL:
+
+**Formato 1 (recomendado):**
 ```
-https://localhost:4566/restapis/{api-id}/local/_user_request_/items
+http://localhost:4566/_aws/execute-api/{api-id}/local/items
 ```
 
-Para facilitar, você pode usar o endpoint do LocalStack diretamente:
+**Formato 2 (alternativo):**
+```
+http://localhost:4566/restapis/{api-id}/local/_user_request_/items
+```
 
-```
-http://localhost:4566/restapis/{api-id}/local/_user_request_
-```
+O script `deploy-api-gateway.sh` exibirá o API ID e os endpoints disponíveis após o deploy.
 
 ## 📡 Endpoints da API
 
@@ -144,8 +135,15 @@ http://localhost:4566/restapis/{api-id}/local/_user_request_
 
 #### Criar um item (POST /items)
 
+**Primeiro, obtenha o API ID:**
 ```bash
-curl -X POST http://localhost:4566/restapis/{api-id}/local/_user_request_/items \
+serverless info --stage local | grep endpoint
+```
+
+**Ou use o formato direto do LocalStack:**
+```bash
+API_ID=$(serverless info --stage local 2>&1 | grep -o 'restapis/[^/]*' | head -1 | sed 's|restapis/||')
+curl -X POST "http://localhost:4566/_aws/execute-api/$API_ID/local/items" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Produto Exemplo",
@@ -153,6 +151,8 @@ curl -X POST http://localhost:4566/restapis/{api-id}/local/_user_request_/items 
     "price": 99.99
   }'
 ```
+
+**Nota:** A primeira chamada pode demorar alguns segundos devido ao cold start do Lambda no LocalStack.
 
 **Resposta:**
 ```json
@@ -223,27 +223,60 @@ aws --endpoint-url=http://localhost:4566 lambda list-functions
 
 ### Teste Completo do Fluxo
 
+**Primeiro, obtenha o API ID:**
+```bash
+API_ID=$(serverless info --stage local 2>&1 | grep -o 'restapis/[^/]*' | head -1 | sed 's|restapis/||')
+echo "API ID: $API_ID"
+```
+
 1. **Criar um item:**
 ```bash
-curl -X POST http://localhost:4566/restapis/{api-id}/local/_user_request_/items \
+curl -X POST "http://localhost:4566/_aws/execute-api/$API_ID/local/items" \
   -H "Content-Type: application/json" \
   -d '{"name": "Teste", "description": "Item de teste", "price": 50}'
 ```
 
-2. **Verificar se o item foi criado:**
+**Nota:** A primeira chamada pode demorar alguns segundos devido ao cold start do Lambda.
+
+2. **Listar todos os itens:**
 ```bash
-curl http://localhost:4566/restapis/{api-id}/local/_user_request_/items
+curl "http://localhost:4566/_aws/execute-api/$API_ID/local/items"
 ```
 
-3. **Atualizar o item:**
+3. **Buscar um item por ID:**
 ```bash
-curl -X PUT http://localhost:4566/restapis/{api-id}/local/_user_request_/items/{item-id} \
+# Substitua {item-id} pelo ID retornado na criação
+curl "http://localhost:4566/_aws/execute-api/$API_ID/local/items/{item-id}"
+```
+
+4. **Atualizar o item:**
+```bash
+curl -X PUT "http://localhost:4566/_aws/execute-api/$API_ID/local/items/{item-id}" \
   -H "Content-Type: application/json" \
   -d '{"name": "Teste Atualizado", "price": 75}'
 ```
 
-4. **Verificar logs do subscriber:**
-Os logs do subscriber aparecerão automaticamente quando as notificações SNS forem processadas.
+5. **Remover o item:**
+```bash
+curl -X DELETE "http://localhost:4566/_aws/execute-api/$API_ID/local/items/{item-id}"
+```
+
+6. **Verificar logs do subscriber:**
+Os logs do subscriber aparecerão automaticamente quando as notificações SNS forem processadas. Você pode verificar os logs do LocalStack:
+
+```bash
+docker logs localstack | grep -i "sns\|subscriber"
+```
+
+### Script de Teste Automatizado
+
+Você também pode usar o script `test-api.sh` para testar todos os endpoints:
+
+```bash
+./test-api.sh
+```
+
+**Nota:** O script `test-api.sh` pode precisar ser ajustado para usar o formato correto do LocalStack API Gateway.
 
 ## 📁 Estrutura do Projeto
 
@@ -279,6 +312,24 @@ O projeto configura automaticamente as permissões necessárias:
 - DynamoDB: PutItem, GetItem, UpdateItem, DeleteItem, Scan, Query
 - SNS: Publish
 
+## 🚨 Considerações Importantes
+
+### Cold Start do Lambda no LocalStack
+
+O LocalStack usa containers Docker para executar as funções Lambda. A primeira chamada a cada função pode demorar alguns segundos (até 1-2 minutos em alguns casos) devido ao cold start. Isso é normal e esperado. Chamadas subsequentes serão muito mais rápidas.
+
+### API Gateway do LocalStack
+
+O projeto está configurado para usar o API Gateway do LocalStack. Após o deploy, o script `deploy-api-gateway.sh` é executado automaticamente para criar o stage do API Gateway. 
+
+**Formato de URL recomendado:**
+```
+http://localhost:4566/_aws/execute-api/{api-id}/local/{path}
+```
+
+**Timeout do Lambda:**
+O LocalStack está configurado com `LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT=180` segundos para evitar timeouts durante o cold start.
+
 ## 🧹 Limpeza
 
 Para remover todos os recursos criados:
@@ -291,6 +342,13 @@ Ou:
 
 ```bash
 serverless remove --stage local
+```
+
+**Nota:** Se você iniciou o LocalStack manualmente, você pode parar e remover o container:
+
+```bash
+docker stop localstack
+docker rm localstack
 ```
 
 ## 📝 Validações Implementadas
@@ -311,124 +369,11 @@ serverless remove --stage local
 
 ## 🐛 Troubleshooting
 
-### Erro: "Docker not available" ou "Error while creating lambda: Docker not available"
-
-Este erro ocorre quando o LocalStack não consegue acessar o Docker para executar funções Lambda.
-
-**Solução:**
-
-1. **Parar o LocalStack atual:**
-```bash
-docker stop $(docker ps -q --filter ancestor=localstack/localstack)
-docker rm $(docker ps -aq --filter ancestor=localstack/localstack)
-```
-
-2. **Iniciar o LocalStack com acesso ao Docker socket:**
-```bash
-./start-localstack.sh
-```
-
-Ou manualmente:
-```bash
-docker run -d \
-  --name localstack \
-  -p 4566:4566 \
-  -p 4571:4571 \
-  -e SERVICES=lambda,dynamodb,sns,apigateway,cloudformation,logs,iam \
-  -e LAMBDA_EXECUTOR=docker-reuse \
-  -e DOCKER_HOST=unix:///var/run/docker.sock \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  localstack/localstack
-```
-
-3. **Aguardar alguns segundos e tentar o deploy novamente:**
-```bash
-npm run deploy
-```
-
-**Verificar se o Docker está rodando:**
-```bash
-docker ps
-```
-
-**Verificar se o LocalStack está saudável:**
-```bash
-curl http://localhost:4566/_localstack/health
-```
-
-### Erro: "Stack is in the 'REVIEW_IN_PROGRESS' state"
-
-Este erro ocorre quando um deploy anterior não foi concluído ou está travado. Para resolver:
-
-**Solução 1: Remover o stack e tentar novamente**
-```bash
-npm run remove
-# Ou
-serverless remove --stage local
-```
-
-Aguarde alguns segundos e tente o deploy novamente:
-```bash
-npm run deploy
-```
-
-**Solução 2: Limpar o LocalStack completamente**
-
-Se a solução 1 não funcionar, reinicie o LocalStack:
-
-1. Parar o container do LocalStack:
-```bash
-docker ps | grep localstack
-docker stop <container-id>
-```
-
-2. Remover o container:
-```bash
-docker rm <container-id>
-```
-
-3. Iniciar o LocalStack novamente:
-```bash
-docker run -d -p 4566:4566 -p 4571:4571 localstack/localstack
-```
-
-4. Aguardar alguns segundos e fazer o deploy:
-```bash
-npm run deploy
-```
-
-**Solução 3: Verificar e limpar stacks órfãos**
-
-Listar stacks no LocalStack:
-```bash
-aws --endpoint-url=http://localhost:4566 cloudformation list-stacks --region us-east-1
-```
-
-Se necessário, você pode limpar todos os recursos do LocalStack reiniciando o container.
-
 ### LocalStack não inicia
 
 Certifique-se de que o Docker está rodando:
 ```bash
 docker ps
-```
-
-Se o LocalStack não estiver rodando, use o script fornecido:
-```bash
-./start-localstack.sh
-```
-
-Ou inicie manualmente com acesso ao Docker socket (necessário para Lambda):
-```bash
-docker run -d \
-  --name localstack \
-  -p 4566:4566 \
-  -p 4571:4571 \
-  -e SERVICES=lambda,dynamodb,sns,apigateway,cloudformation,logs,iam \
-  -e LAMBDA_EXECUTOR=docker-reuse \
-  -e DOCKER_HOST=unix:///var/run/docker.sock \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  localstack/localstack
 ```
 
 ### Erro ao fazer deploy
@@ -438,34 +383,9 @@ Verifique se todas as dependências estão instaladas:
 npm install
 ```
 
-Certifique-se de que o LocalStack está rodando e acessível:
-```bash
-curl http://localhost:4566/_localstack/health
-```
-
 ### Endpoints não funcionam
 
 Verifique se o deploy foi concluído com sucesso e anote a URL da API do output.
-
-### Erro: "The security token included in the request is invalid"
-
-Este erro ocorre quando o AWS SDK tenta validar credenciais reais da AWS no LocalStack.
-
-**Solução:** ✅ **JÁ RESOLVIDO**
-
-Foi criado um módulo de configuração (`src/config/aws.js`) que:
-- Detecta automaticamente ambiente local
-- Configura endpoint do LocalStack
-- Usa credenciais fake aceitas pelo LocalStack
-
-**Se o erro persistir:**
-1. Certifique-se de que fez deploy após as correções:
-   ```bash
-   npm run deploy
-   ```
-2. Verifique se os handlers estão usando a configuração correta (já atualizados)
-
-Para mais detalhes, consulte: `SOLUCAO_TOKEN_INVALIDO.md`
 
 ### Notificações SNS não são recebidas
 

@@ -1,4 +1,28 @@
-const { DynamoDB: dynamodb } = require('../config/aws');
+const AWS = require('aws-sdk');
+
+// Configurar AWS SDK para LocalStack
+const isLocal = process.env.STAGE === 'local' || process.env.IS_OFFLINE;
+const localstackEndpoint = process.env.AWS_ENDPOINT_URL || 
+  (process.env.LOCALSTACK_HOSTNAME ? 
+    `http://${process.env.LOCALSTACK_HOSTNAME}:${process.env.EDGE_PORT || '4566'}` : 
+    'http://localhost:4566');
+
+if (isLocal) {
+  AWS.config.update({
+    region: process.env.AWS_REGION || 'us-east-1',
+    accessKeyId: 'test',
+    secretAccessKey: 'test'
+  });
+}
+
+const dynamodbConfig = isLocal ? {
+  endpoint: localstackEndpoint,
+  region: process.env.AWS_REGION || 'us-east-1',
+  accessKeyId: 'test',
+  secretAccessKey: 'test'
+} : {};
+
+const dynamodb = new AWS.DynamoDB.DocumentClient(dynamodbConfig);
 
 /**
  * Lambda handler para remover um item

@@ -4,10 +4,9 @@
   "description": "CRUD Serverless com Notificações SNS usando LocalStack",
   "main": "index.js",
   "scripts": {
-    "deploy": "serverless deploy --stage local && ./deploy-api-stage.sh",
+    "deploy": "serverless deploy --stage local",
     "remove": "serverless remove --stage local",
-    "offline": "serverless offline --stage local",
-    "clean": "serverless remove --stage local && echo 'Stack removido. Aguarde alguns segundos antes de fazer deploy novamente.'"
+    "offline": "serverless offline --stage local"
   },
   "keywords": [
     "serverless",

@@ -1,5 +1,36 @@
-const { DynamoDB: dynamodb, SNS: sns } = require('../config/aws');
-const { getTopicArn } = require('../utils/sns');
+const AWS = require('aws-sdk');
+
+// Configurar AWS SDK para LocalStack
+const isLocal = process.env.STAGE === 'local' || process.env.IS_OFFLINE;
+const localstackEndpoint = process.env.AWS_ENDPOINT_URL || 
+  (process.env.LOCALSTACK_HOSTNAME ? 
+    `http://${process.env.LOCALSTACK_HOSTNAME}:${process.env.EDGE_PORT || '4566'}` : 
+    'http://localhost:4566');
+
+if (isLocal) {
+  AWS.config.update({
+    region: process.env.AWS_REGION || 'us-east-1',
+    accessKeyId: 'test',
+    secretAccessKey: 'test'
+  });
+}
+
+const dynamodbConfig = isLocal ? {
+  endpoint: localstackEndpoint,
+  region: process.env.AWS_REGION || 'us-east-1',
+  accessKeyId: 'test',
+  secretAccessKey: 'test'
+} : {};
+
+const snsConfig = isLocal ? {
+  endpoint: localstackEndpoint,
+  region: process.env.AWS_REGION || 'us-east-1',
+  accessKeyId: 'test',
+  secretAccessKey: 'test'
+} : {};
+
+const dynamodb = new AWS.DynamoDB.DocumentClient(dynamodbConfig);
+const sns = new AWS.SNS(snsConfig);
 
 /**
  * Valida os dados de entrada para atualização de item
@@ -147,8 +178,21 @@ exports.handler = async (event) => {
       timestamp: result.Attributes.updatedAt
     };
     
+    // Construir ARN do tópico SNS (LocalStack pode não resolver a referência do CloudFormation)
+    let topicArn = process.env.SNS_TOPIC_ARN;
+    // Se estiver em ambiente local, sempre construir o ARN manualmente
+    if (isLocal) {
+      // Verificar se já é um ARN válido (começa com arn:aws:sns)
+      if (!topicArn || !topicArn.startsWith('arn:aws:sns:') || topicArn.includes('Fn::Ref') || topicArn.includes('ItemsTopic')) {
+        // Construir ARN manualmente para LocalStack
+        const topicName = `roteiro3-crud-serverless-items-topic-${process.env.STAGE || 'local'}`;
+        const region = process.env.AWS_REGION || 'us-east-1';
+        topicArn = `arn:aws:sns:${region}:000000000000:${topicName}`;
+      }
+    }
+    
     await sns.publish({
-      TopicArn: getTopicArn(),
+      TopicArn: topicArn,
       Message: JSON.stringify(snsMessage),
       Subject: 'Item atualizado'
     }).promise();
