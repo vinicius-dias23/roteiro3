@@ -1,0 +1,32 @@
+{
+  "name": "roteiro3-crud-serverless",
+  "version": "1.0.0",
+  "description": "CRUD Serverless com Notificações SNS usando LocalStack",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "serverless deploy --stage local && ./deploy-api-stage.sh",
+    "remove": "serverless remove --stage local",
+    "offline": "serverless offline --stage local",
+    "clean": "serverless remove --stage local && echo 'Stack removido. Aguarde alguns segundos antes de fazer deploy novamente.'"
+  },
+  "keywords": [
+    "serverless",
+    "aws",
+    "localstack",
+    "lambda",
+    "dynamodb",
+    "sns"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1691.0",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "serverless": "^3.38.0",
+    "serverless-localstack": "^1.0.1",
+    "serverless-offline": "^13.3.3"
+  }
+}
+

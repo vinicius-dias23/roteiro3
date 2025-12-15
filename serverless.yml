@@ -1,0 +1,161 @@
+service: roteiro3-crud-serverless
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  stage: ${opt:stage, 'local'}
+  environment:
+    STAGE: ${self:provider.stage}
+    ITEMS_TABLE: ${self:service}-items-${self:provider.stage}
+    SNS_TOPIC_NAME: ${self:service}-items-topic-${self:provider.stage}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Scan
+        - dynamodb:Query
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.ITEMS_TABLE}"
+    - Effect: Allow
+      Action:
+        - sns:Publish
+      Resource:
+        Ref: ItemsTopic
+
+plugins:
+  - serverless-localstack
+  - serverless-offline
+
+custom:
+  localstack:
+    stages:
+      - local
+    host: http://localhost
+    edgePort: 4566
+    autostart: false
+    lambda:
+      mountCode: false
+    docker:
+      sudo: false
+    # Desabilitar cache invalidation para evitar problemas
+    skipCacheInvalidation: true
+    # Configuração do API Gateway
+    apigateway:
+      # Forçar criação do deployment
+      createDeployment: true
+
+resources:
+  Resources:
+    # DynamoDB Table
+    ItemsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ITEMS_TABLE}
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    # SNS Topic
+    ItemsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: ${self:service}-items-topic-${self:provider.stage}
+        DisplayName: Items CRUD Notifications
+
+    # SNS Subscription (Lambda subscriber)
+    ItemsTopicSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn:
+          Ref: ItemsTopic
+        Protocol: lambda
+        Endpoint:
+          Fn::GetAtt:
+            - SnsSubscriberLambdaFunction
+            - Arn
+
+    # Permission for SNS to invoke Lambda subscriber
+    SnsSubscriberLambdaInvokePermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        FunctionName:
+          Ref: SnsSubscriberLambdaFunction
+        Action: lambda:InvokeFunction
+        Principal: sns.amazonaws.com
+        SourceArn:
+          Ref: ItemsTopic
+
+    # API Gateway Deployment (necessário para LocalStack)
+    ApiGatewayDeployment:
+      Type: AWS::ApiGateway::Deployment
+      DependsOn:
+        - ApiGatewayRestApi
+      Properties:
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        StageName: ${self:provider.stage}
+        Description: Deployment for ${self:provider.stage} stage
+
+functions:
+  # CREATE - POST /items
+  createItem:
+    handler: src/handlers/createItem.handler
+    events:
+      - http:
+          path: items
+          method: post
+          cors: true
+
+  # READ ALL - GET /items
+  listItems:
+    handler: src/handlers/listItems.handler
+    events:
+      - http:
+          path: items
+          method: get
+          cors: true
+
+  # READ ONE - GET /items/{id}
+  getItem:
+    handler: src/handlers/getItem.handler
+    events:
+      - http:
+          path: items/{id}
+          method: get
+          cors: true
+
+  # UPDATE - PUT /items/{id}
+  updateItem:
+    handler: src/handlers/updateItem.handler
+    events:
+      - http:
+          path: items/{id}
+          method: put
+          cors: true
+
+  # DELETE - DELETE /items/{id}
+  deleteItem:
+    handler: src/handlers/deleteItem.handler
+    events:
+      - http:
+          path: items/{id}
+          method: delete
+          cors: true
+
+  # SNS Subscriber
+  snsSubscriber:
+    handler: src/handlers/snsSubscriber.handler
+    name: SnsSubscriberLambdaFunction
+
